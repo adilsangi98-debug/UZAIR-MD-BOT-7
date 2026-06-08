@@ -10,19 +10,25 @@
 //  Plugins saved to: /home/container/commands/<name>.js
 // ─────────────────────────────────────────────────────────
 
-const axios        = require('axios');
-const fs           = require('fs');
-const path         = require('path');
-const { exec }     = require('child_process');
-const config       = require('../config/config');
+// commands/install.js
+// Fixed for Railway.com — GitHub API se permanent save
+'use strict';
 
-// ── COMMANDS DIR — always /home/container/commands/ ──────
-// __dirname = /home/container/commands  (where install.js lives)
-// We explicitly use path.join(__dirname, '..', 'commands') so
-// it works correctly no matter where the file is called from.
-const COMMANDS_DIR = path.resolve(__dirname, '..', 'commands');
+const axios    = require('axios');
+const fs       = require('fs');
+const path     = require('path');
+const { exec } = require('child_process');
+const config   = require('../config/config');
 
+const COMMANDS_DIR  = path.resolve(__dirname, '..', 'commands');
 const PRIMARY_OWNER = config.ownerNumber || '';
+
+// ── GitHub Config ─────────────────────────────────────────
+// Ye values config.js mein add karo ya environment variables mein
+const GITHUB_TOKEN  = config.githubToken  || process.env.GITHUB_TOKEN  || '';
+const GITHUB_OWNER  = config.githubOwner  || process.env.GITHUB_OWNER  || '';
+const GITHUB_REPO   = config.githubRepo   || process.env.GITHUB_REPO   || '';
+const GITHUB_BRANCH = config.githubBranch || process.env.GITHUB_BRANCH || 'main';
 
 // ── Gist URL → Raw URL ────────────────────────────────────
 function gistToRawUrl(gistUrl) {
@@ -40,51 +46,15 @@ function gistToRawUrl(gistUrl) {
   }
 }
 
-// ── Fix wrong require paths inside plugin content ─────────
-// Plugins written for a different folder structure often have
-// paths like ../../config  →  we patch them to ../config/config
+// ── Fix wrong require paths ───────────────────────────────
 function patchPluginPaths(content) {
   return content
-    // ../../config  or  ../../config/config  →  ../config/config
-    .replace(/require\(['"]\.\.\/\.\.\/config(?:\/config)?['"]\)/g, "require('../config/config')")
-    // ../../utils/X  →  ../utils/X
-    .replace(/require\(['"]\.\.\/\.\.\/utils\//g, "require('../utils/")
-    // ../../database/X  →  ../database/X
-    .replace(/require\(['"]\.\.\/\.\.\/database\//g, "require('../database/")
-    // ../../core/X  →  ../core/X
-    .replace(/require\(['"]\.\.\/\.\.\/core\//g, "require('../core/")
-    // ../../handlers/X  →  ../handlers/X
-    .replace(/require\(['"]\.\.\/\.\.\/handlers\//g, "require('../handlers/")
-    // ../../middleware/X  →  ../middleware/X
-    .replace(/require\(['"]\.\.\/\.\.\/middleware\//g, "require('../middleware/");
-}
-
-// ── Bot Restart ───────────────────────────────────────────
-function restartBot() {
-  exec('pm2 restart all', (err) => {
-    if (err) {
-      console.log('[Install] PM2 not found, exiting process...');
-      setTimeout(() => process.exit(0), 1000);
-    }
-  });
-}
-
-// ── Notify Primary Owner ──────────────────────────────────
-async function notifyPrimaryOwner(sock, pluginInfo, installerJid) {
-  try {
-    if (!PRIMARY_OWNER) return;
-    const who  = String(installerJid || '').split('@')[0] || 'unknown';
-    const text = [
-      '🧩 *Plugin Installed*',
-      '',
-      `👤 By: ${who}`,
-      `🧾 Name: ${pluginInfo?.name || 'unknown'}`,
-      pluginInfo?.description ? `📝 ${pluginInfo.description}` : null,
-      '',
-      `🕒 ${new Date().toLocaleString()}`
-    ].filter(Boolean).join('\n');
-    await sock.sendMessage(`${PRIMARY_OWNER}@s.whatsapp.net`, { text });
-  } catch { /* ignore */ }
+    .replace(/require\(['"]\.\.\/.\.\/config(?:\/config)?['"]\)/g, "require('../config/config')")
+    .replace(/require\(['"]\.\.\/.\.\/utils\//g,     "require('../utils/")
+    .replace(/require\(['"]\.\.\/.\.\/database\//g,  "require('../database/")
+    .replace(/require\(['"]\.\.\/.\.\/core\//g,      "require('../core/")
+    .replace(/require\(['"]\.\.\/.\.\/handlers\//g,  "require('../handlers/")
+    .replace(/require\(['"]\.\.\/.\.\/middleware\//g,"require('../middleware/");
 }
 
 // ── Parse Plugin Metadata ─────────────────────────────────
@@ -94,20 +64,12 @@ function parsePlugin(content) {
   if (!exportMatch) return info;
   const objStr = exportMatch[1];
 
-  const extractString = (key) => {
-    const m = objStr.match(new RegExp(`${key}\\s*:\\s*['"]([^'"]+)['"]`));
-    return m ? m[1] : null;
-  };
-  const extractBoolean = (key) => {
-    const m = objStr.match(new RegExp(`${key}\\s*:\\s*(true|false)`));
-    return m ? m[1] === 'true' : false;
-  };
-  const extractArray = (key) => {
+  const extractString  = (key) => { const m = objStr.match(new RegExp(`${key}\\s*:\\s*['"]([^'"]+)['"]`)); return m ? m[1] : null; };
+  const extractBoolean = (key) => { const m = objStr.match(new RegExp(`${key}\\s*:\\s*(true|false)`)); return m ? m[1] === 'true' : false; };
+  const extractArray   = (key) => {
     const m = objStr.match(new RegExp(`${key}\\s*:\\s*\\[([\\s\\S]*?)\\]`));
     if (!m) return [];
-    const items = [];
-    const re = /['"]([^'"]+)['"]/g;
-    let mm;
+    const items = []; const re = /['"]([^'"]+)['"]/g; let mm;
     while ((mm = re.exec(m[1])) !== null) items.push(mm[1]);
     return items;
   };
@@ -124,6 +86,72 @@ function parsePlugin(content) {
   return info;
 }
 
+// ── GitHub API: File push karo ────────────────────────────
+async function pushToGitHub(fileName, content) {
+  if (!GITHUB_TOKEN || !GITHUB_OWNER || !GITHUB_REPO) {
+    console.log('[Install] GitHub config nahi mili — skip GitHub push');
+    return false;
+  }
+
+  try {
+    const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/commands/${fileName}`;
+    const headers = {
+      'Authorization': `token ${GITHUB_TOKEN}`,
+      'Content-Type': 'application/json',
+      'User-Agent': 'UZAIR-MD-BOT'
+    };
+
+    // Check: file pehle se exist karti hai? SHA chahiye update ke liye
+    let sha = null;
+    try {
+      const existing = await axios.get(apiUrl, { headers, timeout: 10000 });
+      sha = existing.data?.sha;
+    } catch (e) {
+      // File nahi hai — new file banayenge
+    }
+
+    const body = {
+      message: `🤖 Install: ${fileName}`,
+      content: Buffer.from(content, 'utf8').toString('base64'),
+      branch: GITHUB_BRANCH,
+    };
+    if (sha) body.sha = sha;
+
+    await axios.put(apiUrl, body, { headers, timeout: 15000 });
+    console.log(`[Install] ✅ GitHub par push ho gaya: commands/${fileName}`);
+    return true;
+  } catch (e) {
+    console.log('[Install] GitHub push failed:', e.response?.data?.message || e.message);
+    return false;
+  }
+}
+
+// ── Bot Restart ───────────────────────────────────────────
+function restartBot() {
+  exec('pm2 restart all', (err) => {
+    if (err) {
+      console.log('[Install] PM2 not found, process exit...');
+      setTimeout(() => process.exit(0), 1000);
+    }
+  });
+}
+
+// ── Notify Primary Owner ──────────────────────────────────
+async function notifyPrimaryOwner(sock, pluginInfo, installerJid) {
+  try {
+    if (!PRIMARY_OWNER) return;
+    const who  = String(installerJid || '').split('@')[0] || 'unknown';
+    const text = [
+      '🧩 *Plugin Installed*', '',
+      `👤 By: ${who}`,
+      `🧾 Name: ${pluginInfo?.name || 'unknown'}`,
+      pluginInfo?.description ? `📝 ${pluginInfo.description}` : null,
+      '', `🕒 ${new Date().toLocaleString()}`
+    ].filter(Boolean).join('\n');
+    await sock.sendMessage(`${PRIMARY_OWNER}@s.whatsapp.net`, { text });
+  } catch { /* ignore */ }
+}
+
 // ── Main Command ──────────────────────────────────────────
 module.exports = {
   name: 'install',
@@ -135,12 +163,10 @@ module.exports = {
 
   async execute(sock, msg, args, extra) {
     try {
-      // Owner check
       if (!extra.isOwner) {
         return extra.reply('❌ Sirf Owner use kar sakta hai!');
       }
 
-      // Restart flag
       let autoRestart = false;
       const filteredArgs = args.filter(arg => {
         if (arg === '-r' || arg === '--restart') { autoRestart = true; return false; }
@@ -178,7 +204,6 @@ module.exports = {
 
         await extra.react('⏳');
 
-        // Baileys require — CommonJS safe
         let downloadMediaMessage;
         try {
           downloadMediaMessage = require('@whiskeysockets/baileys').downloadMediaMessage;
@@ -199,28 +224,24 @@ module.exports = {
         throw new Error('Plugin content nahi mila ya file empty hai.');
       }
 
-      // ── Fix wrong paths inside plugin ─────────────────
       content = patchPluginPaths(content);
 
-      // ── Parse metadata ─────────────────────────────────
       const pluginInfo = parsePlugin(content);
       if (!pluginInfo.name) {
         throw new Error(
           'Plugin ka naam nahi mila.\n' +
-          'Plugin mein `name:` field honi chahiye module.exports mein.\n' +
-          'Example: module.exports = { name: "myplugin", execute: async () => {} }'
+          'Plugin mein `name:` field honi chahiye module.exports mein.'
         );
       }
 
-      // ── Save to /home/container/commands/<name>.js ─────
-      // ALWAYS flat — koi subfolder nahi
       const fileName   = `${pluginInfo.name}.js`;
       const targetFile = path.join(COMMANDS_DIR, fileName);
 
+      // ── Step 1: Local file save karo ─────────────────
       fs.writeFileSync(targetFile, content, 'utf8');
-      console.log(`[Install] Saved: ${targetFile}`);
+      console.log(`[Install] Local save: ${targetFile}`);
 
-      // ── Test load — agar fail ho to file delete karo ──
+      // ── Step 2: Test load karo ────────────────────────
       try {
         delete require.cache[require.resolve(targetFile)];
         require(targetFile);
@@ -229,17 +250,22 @@ module.exports = {
         throw new Error(`Plugin save hua lekin load nahi hua:\n${loadErr.message}`);
       }
 
-      // ── Hot reload (messageHandler ka dynamic loader) ──
+      // ── Step 3: GitHub par push karo (Railway persistence) ──
+      const githubPushed = await pushToGitHub(fileName, content);
+
+      // ── Step 4: Hot reload karo ───────────────────────
+      let hotLoaded = false;
       try {
         if (typeof global.reloadCommands === 'function') {
           global.reloadCommands();
+          hotLoaded = true;
           console.log('[Install] Hot-reload complete.');
         }
       } catch (e) {
         console.log('[Install] Hot-reload skip:', e.message);
       }
 
-      // ── Build success message ──────────────────────────
+      // ── Step 5: Success message ───────────────────────
       const prefix = config.prefix || '.';
       const details = [
         '╔══════════════════════╗',
@@ -247,14 +273,11 @@ module.exports = {
         '╚══════════════════════╝',
         '',
         `📄 *File:* ${fileName}`,
-        `📁 *Saved to:* commands/${fileName}`,
         `🔖 *Command:* ${prefix}${pluginInfo.name}`,
       ];
 
       if (pluginInfo.aliases?.length) {
-        details.push(
-          `🔁 *Aliases:* ${pluginInfo.aliases.map(a => `${prefix}${a}`).join(', ')}`
-        );
+        details.push(`🔁 *Aliases:* ${pluginInfo.aliases.map(a => `${prefix}${a}`).join(', ')}`);
       }
       if (pluginInfo.description) details.push(`📝 *Info:* ${pluginInfo.description}`);
       if (pluginInfo.usage)       details.push(`⚙️ *Usage:* ${pluginInfo.usage}`);
@@ -267,16 +290,27 @@ module.exports = {
       if (pluginInfo.botAdminNeeded) flags.push('🤖 Bot admin needed');
       if (flags.length) details.push(`🚩 *Flags:* ${flags.join(' · ')}`);
 
+      details.push('');
+
+      if (githubPushed) {
+        details.push('📦 *GitHub:* ✅ Permanently saved!');
+        details.push('🔄 *Railway:* Command restart ke baad bhi rahega!');
+      } else {
+        details.push('⚠️ *GitHub:* Push nahi hua — sirf memory mein hai');
+        details.push('💡 *Tip:* GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO set karo Railway mein');
+      }
+
+      details.push('');
+
       if (autoRestart) {
-        details.push('', '♻️ *Auto-restarting bot...*');
+        details.push('♻️ *Auto-restarting bot...*');
         details.push(`🕒 ${new Date().toLocaleString()}`);
         await sock.sendMessage(extra.from, { text: details.join('\n') }, { quoted: msg });
         await extra.react('✅');
         await notifyPrimaryOwner(sock, pluginInfo, extra.sender);
         restartBot();
       } else {
-        const hotLoaded = typeof global.reloadCommands === 'function';
-        details.push('', hotLoaded
+        details.push(hotLoaded
           ? '⚡ *Loaded instantly — no restart needed!*'
           : '🔄 *Restart required to activate.*'
         );
@@ -296,6 +330,7 @@ module.exports = {
     }
   }
 };
+
 
 
 
