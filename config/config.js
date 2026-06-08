@@ -2,14 +2,6 @@
 //       UZAIR MD BOT - MAIN CONFIGURATION
 // ============================================
 
-// ============================================
-//       UZAIR MD BOT - MAIN CONFIGURATION
-// ============================================
-
-// ============================================
-//       UZAIR MD BOT - MAIN CONFIGURATION
-// ============================================
-
 const config = {
 
   botName:     'UZAIR MD BOT',
@@ -60,14 +52,6 @@ const config = {
     menuAudio: './assets/menu.mp3',
   },
 
-  // ─── GitHub Config (Railway persistence ke liye) ───
-  githubToken:  process.env.GITHUB_TOKEN || '',
-  githubOwner:  'adilsangi98-debug',
-  githubRepo:   'UZAIR-MD-BOT-7',
-  githubBranch: 'main',
-
 };
 
 module.exports = config;
-
-
