@@ -57,7 +57,7 @@ const config = {
   },
 
   // ─── GitHub Config (Railway persistence ke liye) ───
-  githubToken:  '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',
+  githubToken:  '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',
   githubOwner:  'adilsangi98-debug',
   githubRepo:   'UZAIR-MD-BOT-7',
   githubBranch: 'main',
