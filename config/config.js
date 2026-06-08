@@ -5,7 +5,7 @@
 const config = {
 
   botName:     'UZAIR MD BOT',
-  ownerNumber: '923013050530',
+  ownerNumber: '923312467635',
   developer:   'UZAIR',
   prefix:      '.',
   version:     '1.0.0',
