@@ -2,10 +2,14 @@
 //       UZAIR MD BOT - MAIN CONFIGURATION
 // ============================================
 
+// ============================================
+//       UZAIR MD BOT - MAIN CONFIGURATION
+// ============================================
+
 const config = {
 
   botName:     'UZAIR MD BOT',
-  ownerNumber: '923312467635',
+  ownerNumber: '923013050530',
   developer:   'UZAIR',
   prefix:      '.',
   version:     '1.0.0',
@@ -52,6 +56,13 @@ const config = {
     menuAudio: './assets/menu.mp3',
   },
 
+  // ─── GitHub Config (Railway persistence ke liye) ───
+  githubToken:  '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',
+  githubOwner:  'adilsangi98-debug',
+  githubRepo:   'UZAIR-MD-BOT-7',
+  githubBranch: 'main',
+
 };
 
 module.exports = config;
+
